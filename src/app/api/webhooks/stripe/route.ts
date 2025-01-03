@@ -4,7 +4,7 @@ import Stripe from 'stripe'
 import { createClient } from '@supabase/supabase-js'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2023-10-16'
+  apiVersion: '2024-12-18.acacia'
 })
 
 const supabase = createClient(
@@ -25,40 +25,31 @@ export async function POST(req: Request) {
       process.env.STRIPE_WEBHOOK_SECRET!
     )
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Webhook signature verification failed' },
-      { status: 400 }
-    )
+    console.error('Webhook signature verification failed:', error)
+    return new NextResponse('Webhook Error', { status: 400 })
   }
 
-  try {
-    switch (event.type) {
-      case 'checkout.session.completed':
-        const session = event.data.object as Stripe.Checkout.Session
-        const userId = session.client_reference_id
+  const session = event.data.object as Stripe.Checkout.Session
 
-        if (userId) {
-          // Update user subscription in database
-          const { error } = await supabase
-            .from('user_subscriptions')
-            .insert({
-              user_id: userId,
-              subscription_type: 'pro',
-              stripe_customer_id: session.customer as string,
-              stripe_subscription_id: session.subscription as string
-            })
-
-          if (error) throw error
+  if (event.type === 'checkout.session.completed') {
+    // Subscription başarılı olduğunda
+    const { error } = await supabase
+      .from('user_subscriptions')
+      .insert([
+        {
+          user_id: session.client_reference_id,
+          subscription_type: 'pro',
+          created_at: new Date().toISOString()
         }
-        break
-    }
+      ])
 
-    return NextResponse.json({ received: true })
-  } catch (error) {
-    console.error('Webhook error:', error)
-    return NextResponse.json(
-      { error: 'Webhook handler failed' },
-      { status: 500 }
-    )
+    if (error) {
+      console.error('Error updating subscription:', error)
+      return new NextResponse('Error updating subscription', { status: 500 })
+    }
   }
-} 
+
+  return new NextResponse(null, { status: 200 })
+}
+
+export const runtime = 'edge' 

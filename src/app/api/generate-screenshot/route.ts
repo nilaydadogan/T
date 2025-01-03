@@ -1,54 +1,73 @@
 import { NextResponse } from 'next/server'
-import Replicate from "replicate"
+import { v4 as uuidv4 } from 'uuid'
+import type { GeneratedAsset } from '@/types/user'
+
+interface DeepAIResponse {
+  output: string[]
+  id: string
+}
 
 export async function POST(req: Request) {
   try {
     const { prompt } = await req.json()
 
     if (!prompt) {
-      return new NextResponse("Prompt is required", { status: 400 })
+      throw new Error('Prompt is required')
     }
 
-    const replicate = new Replicate({
-      auth: process.env.REPLICATE_API_TOKEN,
+    // Enhance the prompt for screenshot generation
+    const enhancedPrompt = `A professional app screenshot showing ${prompt}. Modern UI design, clean interface, mobile app style`
+
+    const response = await fetch('https://api.deepai.org/api/text2img', {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.DEEPAI_API_KEY!,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        text: enhancedPrompt,
+        width: 1242, // iPhone screenshot width
+        height: 2688 // iPhone screenshot height
+      }),
     })
 
-    const output = await replicate.run(
-      "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-      {
-        input: {
-          prompt: prompt,
-          negative_prompt: "blurry, bad quality, distorted, deformed",
-          width: 1024,
-          height: 1792,
-          num_outputs: 1,
-          scheduler: "K_EULER",
-          num_inference_steps: 50,
-          guidance_scale: 7.5,
-          refine: "expert_ensemble_refiner",
-          high_noise_frac: 0.8,
-        }
-      }
-    )
+    if (!response.ok) {
+      throw new Error('Failed to generate image')
+    }
 
-    if (!output || !output[0]) {
+    const data = await response.json() as DeepAIResponse
+
+    if (!data.output || !data.output.length) {
       throw new Error('No output generated')
     }
 
-    const imageUrl = output[0]
-    
-    // Fetch the image and convert to base64
-    const imageResponse = await fetch(imageUrl)
-    const imageBuffer = Buffer.from(await imageResponse.arrayBuffer())
-    const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`
+    const imageUrl = data.output[0]
 
-    return NextResponse.json({
-      success: true,
-      url: base64Image
-    })
+    // Fetch the generated image
+    const imageResponse = await fetch(imageUrl)
+    if (!imageResponse.ok) {
+      throw new Error('Failed to fetch generated image')
+    }
+
+    const imageBuffer = await imageResponse.arrayBuffer()
+    const base64Image = Buffer.from(imageBuffer).toString('base64')
+
+    const asset: GeneratedAsset = {
+      id: uuidv4(),
+      type: 'screenshot',
+      name: `ai-screenshot-${Date.now()}.png`,
+      size: '1242x2688',
+      url: `data:image/png;base64,${base64Image}`,
+      createdAt: Date.now()
+    }
+
+    return NextResponse.json({ asset })
 
   } catch (error) {
-    console.log('[SCREENSHOT_ERROR]', error)
-    return new NextResponse("Internal Error", { status: 500 })
+    console.error('Screenshot generation error:', error)
+    return NextResponse.json(
+      { error: 'Failed to generate screenshot' },
+      { status: 500 }
+    )
   }
 } 

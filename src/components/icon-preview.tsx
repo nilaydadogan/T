@@ -5,12 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Download, Info } from 'lucide-react'
 import JSZip from 'jszip'
-import type { GeneratedAsset } from '@/types'
+import type { GeneratedAsset } from '@/types/user'
 
 interface IconPreviewProps {
   assets: GeneratedAsset[]
-  selectedIndex?: number | null
-  onSelect?: (index: number) => void
+  selectedIndex: number | null
+  onSelect: (index: number) => void
 }
 
 export function IconPreview({ assets, selectedIndex, onSelect }: IconPreviewProps) {

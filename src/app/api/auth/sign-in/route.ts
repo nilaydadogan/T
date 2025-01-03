@@ -1,41 +1,29 @@
 import { NextResponse } from 'next/server'
-import type { User } from '@/lib/auth-store'
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+import { cookies } from 'next/headers'
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json()
-    const { email, password } = body
+    const { email, password } = await req.json()
+    const supabase = createRouteHandlerClient({ cookies })
 
-    // Create a premium test user for test@test.com
-    if (email === 'test@test.com') {
-      const user: User = {
-        id: 'test-123',
-        name: 'Test User',
-        email: 'test@test.com',
-        subscription: 'pro' // Premium test user
-      }
-      return NextResponse.json({
-        success: true,
-        user
-      })
-    }
-
-    // Regular users get free subscription
-    const user: User = {
-      id: '1',
-      name: 'User',
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
-      subscription: 'free'
-    }
-
-    return NextResponse.json({
-      success: true,
-      user
+      password
     })
+
+    if (error) throw error
+
+    return NextResponse.json({ 
+      user: data.user,
+      session: data.session 
+    })
+
   } catch (error) {
+    console.error('Sign in error:', error)
     return NextResponse.json(
-      { success: false, error: 'Invalid credentials' },
-      { status: 400 }
+      { error: 'Authentication failed' },
+      { status: 401 }
     )
   }
 } 
