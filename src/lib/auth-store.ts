@@ -1,12 +1,26 @@
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { User } from '@supabase/supabase-js'
 
+export type { User }
+
 class AuthStore {
   private supabase = createClientComponentClient()
   private user: User | null = null
   private subscription: string | null = null
   private initialized = false
   private persistedAuth = false
+
+  setUser(user: User | null) {
+    this.user = user
+    if (user) {
+      localStorage.setItem('auth_user', JSON.stringify(user))
+      this.persistedAuth = true
+    } else {
+      localStorage.removeItem('auth_user')
+      this.persistedAuth = false
+    }
+    window.dispatchEvent(new Event('auth-changed'))
+  }
 
   async initialize() {
     if (this.initialized) return
@@ -104,11 +118,9 @@ class AuthStore {
   async signOut() {
     try {
       await this.supabase.auth.signOut()
-      this.user = null
+      this.setUser(null)
       this.subscription = null
-      this.persistedAuth = false
       
-      localStorage.removeItem('auth_user')
       localStorage.clear()
       sessionStorage.clear()
       
@@ -118,7 +130,6 @@ class AuthStore {
           .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/")
       })
       
-      window.dispatchEvent(new Event('auth-changed'))
       window.location.reload()
     } catch (error) {
       console.error('Sign out error:', error)

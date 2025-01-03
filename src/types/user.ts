@@ -13,4 +13,12 @@ export interface GeneratedAsset {
   size: string
   url: string
   createdAt: number
+  data?: any
+}
+
+export interface IconSize {
+  size: number
+  name: string
+  idiom?: string
+  scale?: string
 } 

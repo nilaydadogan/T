@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Card } from '@/components/ui/card'
+import { Card, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
@@ -19,7 +19,6 @@ import { authStore } from '@/lib/auth-store'
 import { Loading } from '@/components/loading'
 import { ErrorDisplay } from '@/components/error-boundary'
 import { PageTransition } from '@/components/page-transition'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 const downloadAsset = async (url: string, type: string) => {
   try {
@@ -121,38 +120,38 @@ export default function DashboardPage() {
 
   // Update the asset card rendering (used in all three tabs)
   const AssetCard = ({ asset }: { asset: GeneratedAsset }) => (
-    <Card key={asset.id} className="overflow-hidden group relative">
+    <Card className="group relative overflow-hidden">
       <div className="aspect-square relative">
         <img
           src={asset.url}
-          alt={asset.prompt || 'Generated asset'}
+          alt={`Generated ${asset.type} - ${asset.name}`}
           className="object-cover w-full h-full"
         />
         {/* Download button overlay */}
-        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
           <Button
-            variant="secondary"
-            size="sm"
-            className="bg-white/10 hover:bg-white/20 text-white"
+            variant="outline"
+            className="text-white border-white hover:bg-white/20"
             onClick={() => downloadAsset(asset.url, asset.type)}
           >
             Download
           </Button>
         </div>
       </div>
-      <div className="p-4 space-y-2">
-        <p className="text-sm font-medium capitalize">
-          {asset.type}
-        </p>
-        {asset.prompt && (
-          <p className="text-xs text-gray-500 line-clamp-2">
-            {asset.prompt}
+      <CardFooter className="p-3">
+        <div className="w-full flex items-center justify-between">
+          <p className="text-sm text-gray-500 truncate">
+            {new Date(asset.createdAt).toLocaleDateString()}
           </p>
-        )}
-        <p className="text-xs text-gray-400">
-          {new Date(asset.createdAt).toLocaleDateString()}
-        </p>
-      </div>
+          <span className={`text-sm ${
+            asset.type === 'icon' 
+              ? 'text-violet-500 dark:text-violet-400'
+              : 'text-gray-500 dark:text-gray-400'
+          }`}>
+            {asset.type}
+          </span>
+        </div>
+      </CardFooter>
     </Card>
   )
 

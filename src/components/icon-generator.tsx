@@ -18,6 +18,7 @@ import { authStore } from '@/lib/auth-store'
 import { useRouter } from 'next/navigation'
 import { userLimits } from '@/lib/user-limits'
 import { Paywall } from '@/components/paywall'
+import type { GeneratedAsset } from '@/types/user'
 import dynamic from 'next/dynamic'
 import JSZip from 'jszip'
 
@@ -135,7 +136,6 @@ export function IconGenerator() {
         } : null
       }))
 
-      // Simulate progress
       const interval = setInterval(() => {
         setProgress(prev => Math.min(prev + 10, 90))
       }, 500)
@@ -151,29 +151,30 @@ export function IconGenerator() {
         throw new Error('Failed to generate icons')
       }
 
+      const data = await response.json()
+      const newAssets = data.assets as GeneratedAsset[]
+
+      // Save assets for authenticated users
+      if (authStore.isAuthenticated()) {
+        newAssets.forEach((asset: GeneratedAsset) => {
+          storage.addAsset(asset)
+        })
+        
+        toast({
+          title: "Success!",
+          description: "Icons generated successfully. View them in your dashboard.",
+        })
+      }
+
       setProgress(100)
-
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'app-icons.zip'
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(url)
-
-      toast({
-        title: "Success",
-        description: "Icons generated successfully!",
-      })
-
       userLimits.incrementManualCount()
+
     } catch (error) {
+      console.error('Generation error:', error)
       toast({
         variant: "destructive",
-        title: "Error",
-        description: "Failed to generate icons. Please try again.",
+        title: "Generation Failed",
+        description: error instanceof Error ? error.message : "Failed to generate icons",
       })
     } finally {
       setIsGenerating(false)
@@ -243,16 +244,17 @@ export function IconGenerator() {
         userLimits.incrementGenerationCount()
         const newAssets = data.images.map((image: any) => ({
           id: crypto.randomUUID(),
-          type: 'icon',
+          type: 'icon' as const,
+          name: `ai-icon-${Date.now()}.png`,
+          size: '1024x1024',
           url: image.url,
-          prompt,
-          createdAt: new Date().toISOString(),
-          userId: '1'
-        }));
+          createdAt: Date.now(),
+          data: { prompt }
+        } satisfies GeneratedAsset))
         
         // Save assets for authenticated users
         if (authStore.isAuthenticated()) {
-          newAssets.forEach(asset => storage.addAsset(asset));
+          newAssets.forEach((asset: GeneratedAsset) => storage.addAsset(asset))
           toast({
             title: "Success!",
             description: "Icons generated successfully. View them in your dashboard.",
@@ -263,20 +265,6 @@ export function IconGenerator() {
                 onClick={() => router.push('/dashboard')}
               >
                 View Dashboard
-              </Button>
-            ),
-          })
-        } else {
-          toast({
-            title: "Want to save your assets?",
-            description: "Sign in to save and access your generated assets anytime.",
-            action: (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push('/auth/sign-in')}
-              >
-                Sign In
               </Button>
             ),
           })

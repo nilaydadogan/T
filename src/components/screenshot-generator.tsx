@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { IconPreview } from '@/components/icon-preview'
-import type { GeneratedAsset } from '@/types'
+import type { GeneratedAsset } from '@/types/user'
 import { storage } from '@/lib/storage'
 import { authStore } from '@/lib/auth-store'
 import { useRouter } from 'next/navigation'
@@ -305,17 +305,17 @@ export function ScreenshotGenerator() {
 
   // Add handler for selecting an asset
   const handleAssetSelect = useCallback(async (index: number) => {
-    const asset = generatedAssets[index];
-    if (!asset) return;
+    const asset = generatedAssets[index]
+    if (!asset) return
 
-    setSelectedAssetIndex(index);
-    setPreviewUrl(asset.url);
+    setSelectedAssetIndex(index)
+    setPreviewUrl(asset.url)
     
     // Create file from the selected asset
-    const response = await fetch(asset.url);
-    const blob = await response.blob();
-    const file = new File([blob], asset.name, { type: 'image/png' });
-    setFile(file);
+    const response = await fetch(asset.url)
+    const blob = await response.blob()
+    const file = new File([blob], asset.name, { type: 'image/png' })
+    setFile(file)
   }, [generatedAssets])
 
   // Cleanup preview URL when component unmounts
@@ -394,55 +394,36 @@ export function ScreenshotGenerator() {
       }
 
       const data = await response.json()
-      
-      if (data.success) {
-        // Download the generated image
-        const imageResponse = await fetch(data.url)
-        const blob = await imageResponse.blob()
-        const downloadUrl = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = downloadUrl
-        a.download = `screenshot-${Date.now()}.png`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        window.URL.revokeObjectURL(downloadUrl)
+      const newAssets = data.assets as GeneratedAsset[]
 
-        const newAsset: GeneratedAsset = {
-          id: crypto.randomUUID(),
-          type: 'screenshot',
-          url: data.url,
-          prompt,
-          createdAt: new Date().toISOString(),
-          userId: '1'
-        }
-
-        // Save to storage if authenticated
-        if (authStore.isAuthenticated()) {
-          storage.addAsset(newAsset)
-        }
-
-        // Update state
-        setGeneratedAssets(prev => [...prev, newAsset])
-        setSelectedAssetIndex(generatedAssets.length)
-        setPreviewUrl(data.url)
-
-        // Increment generation count
-        userLimits.incrementGenerationCount()
-
-        // Scroll to preview
-        setTimeout(() => {
-          const previewSection = document.querySelector('#preview-section')
-          if (previewSection) {
-            previewSection.scrollIntoView({ behavior: 'smooth' })
-          }
-        }, 100)
-
+      // Save assets for authenticated users
+      if (authStore.isAuthenticated()) {
+        newAssets.forEach((asset: GeneratedAsset) => storage.addAsset(asset))
         toast({
-          title: "Success",
-          description: "Screenshot generated and downloaded successfully!",
+          title: "Success!",
+          description: "Screenshots generated successfully. View them in your dashboard.",
         })
       }
+
+      setGeneratedAssets(newAssets)
+      setSelectedAssetIndex(generatedAssets.length)
+      setPreviewUrl(data.url)
+
+      // Increment generation count
+      userLimits.incrementGenerationCount()
+
+      // Scroll to preview
+      setTimeout(() => {
+        const previewSection = document.querySelector('#preview-section')
+        if (previewSection) {
+          previewSection.scrollIntoView({ behavior: 'smooth' })
+        }
+      }, 100)
+
+      toast({
+        title: "Success",
+        description: "Screenshot generated and downloaded successfully!",
+      })
     } catch (error) {
       toast({
         variant: "destructive",
