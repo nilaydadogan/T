@@ -1,75 +1,75 @@
 'use server'
 
 import sharp from 'sharp'
-import type { GeneratedAsset } from '@/types'
+import { v4 as uuidv4 } from 'uuid'
+import type { GeneratedAsset } from '@/types/user'
 
-// Define icon sizes for iOS
-const ICON_SIZES = [
-  { size: 1024, name: 'icon-1024.png' },
-  { size: 180, name: 'icon-180.png' },
-  { size: 167, name: 'icon-167.png' },
-  { size: 152, name: 'icon-152.png' },
-  { size: 120, name: 'icon-120.png' },
-  { size: 87, name: 'icon-87.png' },
-  { size: 80, name: 'icon-80.png' },
-  { size: 76, name: 'icon-76.png' },
-  { size: 60, name: 'icon-60.png' },
-  { size: 58, name: 'icon-58.png' },
-  { size: 40, name: 'icon-40.png' },
-  { size: 29, name: 'icon-29.png' },
-  { size: 20, name: 'icon-20.png' },
-]
-
-export async function generateIcons(base64Image: string) {
+export async function generateIcons(buffer: Buffer) {
   try {
-    console.log('Starting icon generation on server')
-    
-    // Convert base64 to Buffer
-    const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, '')
-    const imageBuffer = Buffer.from(base64Data, 'base64')
-    
-    // Load image with sharp
-    const image = sharp(imageBuffer)
-    
-    // Get image metadata
-    const metadata = await image.metadata()
-    console.log('Image metadata:', metadata)
-    
-    if (!metadata.width || !metadata.height) {
-      throw new Error('Invalid image dimensions')
-    }
-    
-    if (metadata.width < 1024 || metadata.height < 1024) {
-      throw new Error('Image must be at least 1024x1024 pixels')
-    }
-    
-    // Generate icons for each size
-    const assets: GeneratedAsset[] = []
-    
-    for (const { size, name } of ICON_SIZES) {
-      console.log(`Generating ${name} (${size}x${size})`)
-      
-      const resized = await image
+    const sizes = [
+      { size: 1024, name: 'iTunesArtwork@2x.png' },
+      { size: 180, name: 'Icon-60@3x.png' },
+      { size: 120, name: 'Icon-60@2x.png' },
+      { size: 167, name: 'Icon-83.5@2x.png' },
+      { size: 152, name: 'Icon-76@2x.png' },
+      { size: 76, name: 'Icon-76.png' },
+      { size: 40, name: 'Icon-40.png' },
+      { size: 80, name: 'Icon-40@2x.png' },
+      { size: 120, name: 'Icon-40@3x.png' },
+      { size: 58, name: 'Icon-29@2x.png' },
+      { size: 87, name: 'Icon-29@3x.png' },
+      { size: 20, name: 'Icon-20.png' },
+      { size: 40, name: 'Icon-20@2x.png' },
+      { size: 60, name: 'Icon-20@3x.png' },
+    ]
+
+    const generatedAssets: GeneratedAsset[] = []
+
+    for (const { size, name } of sizes) {
+      const resized = await sharp(buffer)
         .resize(size, size, {
           fit: 'contain',
-          background: { r: 255, g: 255, b: 255, alpha: 0 }
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
         })
-        .png()
         .toBuffer()
-      
-      assets.push({
+
+      generatedAssets.push({
+        id: uuidv4(),
+        type: 'icon',
         name,
         size: `${size}x${size}`,
-        url: `data:image/png;base64,${resized.toString('base64')}`
+        url: `data:image/png;base64,${resized.toString('base64')}`,
+        createdAt: Date.now()
       })
     }
-    
-    console.log('Icon generation complete')
-    return { assets }
-  } catch (error) {
-    console.error('Icon generation failed:', error)
-    return { 
-      error: error instanceof Error ? error.message : 'Failed to generate icons'
+
+    // Contents.json oluştur
+    const contents = {
+      images: sizes.map(({ size, name }) => ({
+        size: `${size}x${size}`,
+        idiom: size >= 76 && size <= 167 ? "ipad" : "iphone",
+        filename: name,
+        scale: name.includes("@2x") ? "2x" : name.includes("@3x") ? "3x" : "1x"
+      })),
+      info: {
+        version: 1,
+        author: "App Store Asset Generator"
+      }
     }
+
+    // Contents.json'ı da assets'e ekle
+    generatedAssets.push({
+      id: uuidv4(),
+      type: 'icon',
+      name: 'Contents.json',
+      size: 'json',
+      url: `data:application/json;base64,${Buffer.from(JSON.stringify(contents, null, 2)).toString('base64')}`,
+      createdAt: Date.now()
+    })
+
+    return generatedAssets
+  } catch (error) {
+    console.error('Error generating icons:', error)
+    throw error
   }
 } 

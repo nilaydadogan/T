@@ -8,9 +8,9 @@ export interface User {
 
 export interface GeneratedAsset {
   id: string
-  userId: string
   type: 'icon' | 'screenshot'
+  name: string
+  size: string
   url: string
-  prompt?: string
-  createdAt: Date
+  createdAt: number
 } 
