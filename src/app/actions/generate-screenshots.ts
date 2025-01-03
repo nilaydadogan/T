@@ -3,9 +3,6 @@
 import sharp from 'sharp'
 import { v4 as uuidv4 } from 'uuid'
 import type { GeneratedAsset } from '@/types/user'
-import satori from 'satori'
-import { join } from 'path'
-import * as fs from 'fs'
 
 interface TextOverlay {
   text: string
@@ -22,9 +19,26 @@ interface ScreenshotOptions {
   quality?: number
 }
 
-// Font dosyasını yükle
-const fontPath = join(process.cwd(), 'public', 'fonts', 'Inter-Regular.ttf')
-const fontData = fs.readFileSync(fontPath)
+function createSVGText(text: string, fontSize: number = 48, color: string = '#000000') {
+  return Buffer.from(`
+    <svg width="100%" height="100%">
+      <style>
+        .text {
+          font-family: Arial, sans-serif;
+          font-size: ${fontSize}px;
+          fill: ${color};
+        }
+      </style>
+      <text
+        x="50%"
+        y="50%"
+        text-anchor="middle"
+        dominant-baseline="middle"
+        class="text"
+      >${text}</text>
+    </svg>
+  `)
+}
 
 export async function generateScreenshots(buffer: Buffer, options: ScreenshotOptions) {
   try {
@@ -50,39 +64,11 @@ export async function generateScreenshots(buffer: Buffer, options: ScreenshotOpt
     // Her overlay için
     for (const overlay of options.overlays) {
       // SVG text oluştur
-      const svg = await satori(
-        {
-          type: 'div',
-          props: {
-            children: overlay.text,
-            style: {
-              fontSize: `${overlay.fontSize || 48}px`,
-              color: overlay.color || '#000000',
-              fontFamily: 'Inter',
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            },
-          },
-        },
-        {
-          width: metadata.width,
-          height: metadata.height,
-          fonts: [
-            {
-              name: 'Inter',
-              data: fontData,
-              weight: 400,
-              style: 'normal',
-            },
-          ],
-        }
+      const svgBuffer = createSVGText(
+        overlay.text,
+        overlay.fontSize,
+        overlay.color
       )
-
-      // SVG'yi buffer'a çevir
-      const svgBuffer = Buffer.from(svg)
 
       // Text overlay'i base image üzerine yerleştir
       const composited = await sharp(baseBuffer)
