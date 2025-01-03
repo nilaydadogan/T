@@ -19,6 +19,7 @@ import { authStore } from '@/lib/auth-store'
 import { Loading } from '@/components/loading'
 import { ErrorDisplay } from '@/components/error-boundary'
 import { PageTransition } from '@/components/page-transition'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 const downloadAsset = async (url: string, type: string) => {
   try {
@@ -44,10 +45,15 @@ export default function DashboardPage() {
   const [assets, setAssets] = useState<GeneratedAsset[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const [userEmail, setUserEmail] = useState<string>('')
+  const [userInitials, setUserInitials] = useState<string>('')
 
   useEffect(() => {
     const initializeDashboard = async () => {
       try {
+        // Auth store'u initialize et
+        await authStore.initialize()
+
         if (!authStore.isAuthenticated()) {
           router.push('/auth/sign-in')
           return
@@ -56,20 +62,26 @@ export default function DashboardPage() {
         // Get user data
         const userData = authStore.getUser()
         if (!userData) {
-          throw new Error('User data not found')
+          // Auth store'u tekrar initialize etmeyi dene
+          await authStore.refreshAuth()
+          const refreshedUser = authStore.getUser()
+          
+          if (!refreshedUser) {
+            throw new Error('User data not found')
+          }
+          
+          setUser(refreshedUser)
+          setIsPro(authStore.isPro())
+        } else {
+          setUser(userData)
+          setIsPro(authStore.isPro())
         }
-        
-        console.log('Current user:', userData)
-        const userIsPro = authStore.isPro()
-        console.log('Is Pro?', userIsPro)
-        
-        setUser(userData)
-        setIsPro(userIsPro)
 
         // Get stored assets
         const storedAssets = storage.getAssets()
         setAssets(storedAssets)
       } catch (err) {
+        console.error('Dashboard initialization error:', err)
         setError(err instanceof Error ? err : new Error('Failed to load dashboard'))
       } finally {
         setIsLoading(false)
@@ -78,6 +90,21 @@ export default function DashboardPage() {
 
     initializeDashboard()
   }, [router])
+
+  useEffect(() => {
+    const user = authStore.getUser()
+    if (user?.email) {
+      setUserEmail(user.email)
+      // Email adresinden baş harfleri al
+      const initials = user.email
+        .split('@')[0] // @ işaretinden önceki kısmı al
+        .match(/\b(\w)/g) // Kelimelerin ilk harflerini al
+        ?.join('') // Harfleri birleştir
+        .toUpperCase() // Büyük harfe çevir
+        .slice(0, 2) // İlk 2 harfi al
+      setUserInitials(initials || '??')
+    }
+  }, [])
 
   const handleLogout = () => {
     authStore.logout()
@@ -189,13 +216,15 @@ export default function DashboardPage() {
             <Card className="p-6 space-y-6">
               <div className="flex flex-col gap-4">
                 {/* User info section */}
-                <div className="p-4 rounded-lg bg-white dark:bg-gray-800 shadow">
-                  <div className="flex items-center gap-4">
-                    <div className="h-12 w-12 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 flex items-center justify-center">
-                      <User className="h-6 w-6 text-white" />
+                <div className="p-6 rounded-lg bg-white dark:bg-gray-800 shadow">
+                  <div className="flex items-center gap-5">
+                    <div className="h-14 w-14 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 flex items-center justify-center flex-shrink-0">
+                      <User className="h-7 w-7 text-white" />
                     </div>
-                    <div>
-                      <h3 className="font-medium">{user?.email}</h3>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-medium truncate">
+                        {user?.email}
+                      </h3>
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mt-2 ${
                         isPro
                           ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white'
@@ -207,18 +236,25 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Show upgrade button for free users */}
-                {!isPro && (
-                  <Button
-                    className="w-full bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white"
-                    onClick={() => router.push('/pricing')}
-                  >
-                    <Crown className="mr-2 h-4 w-4" />
-                    Upgrade to Premium
-                  </Button>
-                )}
+                {/* Stats section */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-lg bg-white dark:bg-gray-800 shadow">
+                    <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400 mb-1">
+                      <ImageIcon className="h-4 w-4" />
+                      <span className="text-sm">Icons</span>
+                    </div>
+                    <p className="text-2xl font-bold">{iconAssets.length}</p>
+                  </div>
+                  <div className="p-4 rounded-lg bg-white dark:bg-gray-800 shadow">
+                    <div className="flex items-center gap-2 text-gray-600 dark:text-gray-400 mb-1">
+                      <Smartphone className="h-4 w-4" />
+                      <span className="text-sm">Screenshots</span>
+                    </div>
+                    <p className="text-2xl font-bold">{screenshotAssets.length}</p>
+                  </div>
+                </div>
 
-                {/* Rest of the left pane content */}
+                {/* Navigation */}
                 <div className="space-y-1">
                   <Button
                     variant="ghost"
@@ -227,17 +263,6 @@ export default function DashboardPage() {
                   >
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back to Studio
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start text-red-500 dark:text-red-400"
-                    onClick={() => {
-                      authStore.logout()
-                      router.push('/')
-                    }}
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Sign Out
                   </Button>
                 </div>
               </div>
@@ -252,32 +277,6 @@ export default function DashboardPage() {
 
             {/* Main Content Area */}
             <Card className="p-6">
-              {/* Add stats section */}
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="p-4 rounded-lg bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-full bg-violet-500/20">
-                      <ImageIcon className="w-5 h-5 text-violet-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">Total Icons</p>
-                      <p className="text-2xl font-bold text-violet-500">{iconAssets.length}</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="p-4 rounded-lg bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-full bg-fuchsia-500/20">
-                      <Smartphone className="w-5 h-5 text-fuchsia-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">Total Screenshots</p>
-                      <p className="text-2xl font-bold text-fuchsia-500">{screenshotAssets.length}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               <Tabs defaultValue="all">
                 <TabsList>
                   <TabsTrigger value="all">All Assets</TabsTrigger>

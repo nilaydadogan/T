@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation'
 import { userLimits } from '@/lib/user-limits'
 import { Paywall } from '@/components/paywall'
 import dynamic from 'next/dynamic'
+import JSZip from 'jszip'
 
 // Dynamically import icons
 const Wand2Icon = dynamic(() => import('lucide-react').then(mod => mod.Wand2), { ssr: false })
@@ -320,6 +321,86 @@ export function IconGenerator() {
       }
     }
   }, [previewUrl])
+
+  const generateZip = async (imageUrl: string) => {
+    const zip = new JSZip()
+    const img = new Image()
+
+    return new Promise<Blob>((resolve, reject) => {
+      img.onload = async () => {
+        try {
+          // App Store icon boyutları
+          const sizes = [
+            { size: 1024, name: 'iTunesArtwork@2x.png' }, // App Store
+            { size: 180, name: 'Icon-60@3x.png' }, // iPhone
+            { size: 120, name: 'Icon-60@2x.png' }, // iPhone
+            { size: 167, name: 'Icon-83.5@2x.png' }, // iPad Pro
+            { size: 152, name: 'Icon-76@2x.png' }, // iPad, iPad mini
+            { size: 76, name: 'Icon-76.png' }, // iPad
+            { size: 40, name: 'Icon-40.png' }, // Spotlight
+            { size: 80, name: 'Icon-40@2x.png' }, // Spotlight
+            { size: 120, name: 'Icon-40@3x.png' }, // Spotlight
+            { size: 58, name: 'Icon-29@2x.png' }, // Settings
+            { size: 87, name: 'Icon-29@3x.png' }, // Settings
+            { size: 20, name: 'Icon-20.png' }, // Notifications
+            { size: 40, name: 'Icon-20@2x.png' }, // Notifications
+            { size: 60, name: 'Icon-20@3x.png' }, // Notifications
+          ]
+
+          // Her boyut için icon oluştur
+          for (const { size, name } of sizes) {
+            const canvas = document.createElement('canvas')
+            canvas.width = size
+            canvas.height = size
+            const ctx = canvas.getContext('2d')
+            
+            if (ctx) {
+              // Görüntüyü canvas'a çiz
+              ctx.drawImage(img, 0, 0, size, size)
+              
+              // Canvas'ı blob'a çevir
+              const blob = await new Promise<Blob>((resolve) => {
+                canvas.toBlob((blob) => {
+                  resolve(blob!)
+                }, 'image/png')
+              })
+              
+              // Zip'e ekle
+              zip.file(name, blob)
+            }
+          }
+
+          // Contents.json dosyasını oluştur
+          const contents = {
+            images: sizes.map(({ size, name }) => ({
+              size: `${size}x${size}`,
+              idiom: size >= 76 && size <= 167 ? "ipad" : "iphone",
+              filename: name,
+              scale: name.includes("@2x") ? "2x" : name.includes("@3x") ? "3x" : "1x"
+            })),
+            info: {
+              version: 1,
+              author: "App Store Asset Generator"
+            }
+          }
+
+          zip.file("Contents.json", JSON.stringify(contents, null, 2))
+
+          // Zip'i oluştur
+          const zipBlob = await zip.generateAsync({ type: 'blob' })
+          resolve(zipBlob)
+        } catch (error) {
+          reject(error)
+        }
+      }
+
+      img.onerror = () => {
+        reject(new Error('Failed to load image'))
+      }
+
+      img.src = imageUrl
+    })
+  }
 
   return (
     <div className="space-y-6">

@@ -1,40 +1,55 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { IconGenerator } from '@/components/icon-generator'
 import { ScreenshotGenerator } from '@/components/screenshot-generator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { useSearchParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { authStore } from '@/lib/auth-store'
-import { useRouter } from 'next/navigation'
 import { LayoutDashboard, LogOut } from 'lucide-react'
 import { PageTransition } from '@/components/page-transition'
 
 export default function StudioPage() {
-  // Move all the current generator page code here
   const searchParams = useSearchParams()
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState('icon')
-  const isAuthenticated = authStore.isAuthenticated()
+  const [activeTab, setActiveTab] = useState<string>('icon')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
 
   useEffect(() => {
-    const createParam = searchParams.get('create')
-    if (createParam === 'true') {
-      setActiveTab('icon')
-    }
-  }, [searchParams])
+    const initializeStudio = async () => {
+      try {
+        await authStore.initialize()
+        const authStatus = authStore.isAuthenticated()
+        setIsAuthenticated(authStatus)
 
-  useEffect(() => {
-    // Client-side auth kontrolü
-    if (!authStore.isAuthenticated()) {
-      router.replace('/auth/sign-in?redirectTo=/studio')
-    }
-  }, [router])
+        if (!authStatus) {
+          router.replace('/auth/sign-in?redirectTo=/studio')
+          return
+        }
 
-  const handleLogout = () => {
-    authStore.logout()
+        const createParam = searchParams.get('create')
+        if (createParam === 'true') {
+          setActiveTab('icon')
+        }
+      } catch (error) {
+        console.error('Studio initialization error:', error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    initializeStudio()
+  }, [router, searchParams])
+
+  const handleLogout = async () => {
+    await authStore.signOut()
     router.push('/')
+  }
+
+  if (isLoading) {
+    return null // veya loading spinner
   }
 
   return (
@@ -47,35 +62,17 @@ export default function StudioPage() {
               <>
                 <Button
                   variant="outline"
-                  className="flex items-center gap-2"
                   onClick={() => router.push('/dashboard')}
                 >
-                  <LayoutDashboard className="w-4 h-4" />
+                  <LayoutDashboard className="w-4 h-4 mr-2" />
                   Dashboard
                 </Button>
                 <Button
                   variant="outline"
-                  className="flex items-center gap-2"
                   onClick={handleLogout}
                 >
-                  <LogOut className="w-4 h-4" />
+                  <LogOut className="w-4 h-4 mr-2" />
                   Sign Out
-                </Button>
-              </>
-            )}
-            {!isAuthenticated && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={() => router.push('/sign-in')}
-                >
-                  Sign In
-                </Button>
-                <Button
-                  className="bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white"
-                  onClick={() => router.push('/sign-up')}
-                >
-                  Sign Up
                 </Button>
               </>
             )}
@@ -91,7 +88,7 @@ export default function StudioPage() {
             </p>
           </div>
 
-          <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="icon">Icon Generator</TabsTrigger>
               <TabsTrigger value="screenshot">Screenshot Generator</TabsTrigger>
