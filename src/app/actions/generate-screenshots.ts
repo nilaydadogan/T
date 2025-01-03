@@ -1,108 +1,97 @@
 'use server'
 
 import sharp from 'sharp'
-import type { GeneratedAsset, ScreenshotTemplate, TextOverlay } from '@/types'
+import { v4 as uuidv4 } from 'uuid'
+import type { GeneratedAsset } from '@/types/user'
+import satori from 'satori'
+import { join } from 'path'
+import * as fs from 'fs'
 
-interface GenerateOptions {
-  backgroundColor: string
-  padding: number
-  quality: number
-  useFrame: boolean
-  overlays: TextOverlay[]
-}
+// Font dosyasını yükle
+const fontPath = join(process.cwd(), 'public', 'fonts', 'Inter-Regular.ttf')
+const fontData = fs.readFileSync(fontPath)
 
-export async function generateScreenshots(
-  base64Image: string,
-  template: ScreenshotTemplate,
-  options: GenerateOptions
-) {
+export async function generateScreenshots(buffer: Buffer, options: any) {
   try {
-    console.log('Starting screenshot generation on server')
-    
-    // Convert base64 to Buffer
-    const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, '')
-    const imageBuffer = Buffer.from(base64Data, 'base64')
-    
-    // Load image with sharp
-    const image = sharp(imageBuffer)
-    
-    // Get image metadata
-    const metadata = await image.metadata()
-    console.log('Image metadata:', metadata)
-    
+    const baseImage = sharp(buffer)
+    const metadata = await baseImage.metadata()
+
     if (!metadata.width || !metadata.height) {
       throw new Error('Invalid image dimensions')
     }
 
-    // Calculate dimensions with padding
-    const finalWidth = template.width + (options.padding * 2)
-    const finalHeight = template.height + (options.padding * 2)
-
-    // Create base image with background
-    const baseImage = sharp({
-      create: {
-        width: finalWidth,
-        height: finalHeight,
-        channels: 4,
-        background: { r: 255, g: 255, b: 255, alpha: 1 }
-      }
-    })
-
-    // Resize screenshot to fit template
-    const resized = await image
-      .resize(template.width, template.height, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
-      })
-      .toBuffer()
-
-    // Composite layers
-    const layers = [
-      {
-        input: resized,
-        top: options.padding,
-        left: options.padding
-      }
-    ]
-
-    // Add overlays
-    for (const overlay of options.overlays) {
-      const textImage = await sharp({
-        text: {
-          text: overlay.text,
-          font: overlay.fontFamily,
-          fontSize: overlay.fontSize,
-          align: overlay.align,
-          rgba: true
+    // Text overlay'ler için SVG oluştur
+    async function createTextOverlay(text: string, fontSize: number, color: string) {
+      const svg = await satori(
+        {
+          type: 'div',
+          props: {
+            children: text,
+            style: {
+              fontSize: `${fontSize}px`,
+              color: color,
+              fontFamily: 'Inter',
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            },
+          },
+        },
+        {
+          width: metadata.width!,
+          height: metadata.height!,
+          fonts: [
+            {
+              name: 'Inter',
+              data: fontData,
+              weight: 400,
+              style: 'normal',
+            },
+          ],
         }
-      }).toBuffer()
+      )
 
-      layers.push({
-        input: textImage,
-        top: overlay.position.y,
-        left: overlay.position.x
+      return Buffer.from(svg)
+    }
+
+    const generatedAssets: GeneratedAsset[] = []
+
+    // Her overlay için
+    for (const overlay of options.overlays) {
+      // Text overlay'i SVG olarak oluştur
+      const textOverlay = await createTextOverlay(
+        overlay.text,
+        overlay.fontSize || 48,
+        overlay.color || '#000000'
+      )
+
+      // Base image üzerine text overlay'i ekle
+      const composited = await baseImage
+        .composite([
+          {
+            input: textOverlay,
+            top: overlay.y || 0,
+            left: overlay.x || 0,
+          },
+        ])
+        .toBuffer()
+
+      // Asset'i kaydet
+      generatedAssets.push({
+        id: uuidv4(),
+        type: 'screenshot',
+        name: `screenshot-${overlay.text}.png`,
+        size: `${metadata.width}x${metadata.height}`,
+        url: `data:image/png;base64,${composited.toString('base64')}`,
+        createdAt: Date.now()
       })
     }
 
-    // Generate final image
-    const final = await baseImage
-      .composite(layers)
-      .png()
-      .toBuffer()
-
-    // Return single asset
-    const asset: GeneratedAsset = {
-      name: `${template.name}.png`,
-      size: `${finalWidth}x${finalHeight}`,
-      url: `data:image/png;base64,${final.toString('base64')}`
-    }
-
-    console.log('Screenshot generation complete')
-    return { assets: [asset] }
+    return generatedAssets
   } catch (error) {
-    console.error('Screenshot generation failed:', error)
-    return { 
-      error: error instanceof Error ? error.message : 'Failed to generate screenshot'
-    }
+    console.error('Error generating screenshots:', error)
+    throw error
   }
 } 
