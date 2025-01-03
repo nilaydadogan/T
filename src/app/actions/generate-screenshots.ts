@@ -7,29 +7,57 @@ import satori from 'satori'
 import { join } from 'path'
 import * as fs from 'fs'
 
+interface TextOverlay {
+  text: string
+  fontSize?: number
+  color?: string
+  x?: number
+  y?: number
+}
+
+interface ScreenshotOptions {
+  overlays: TextOverlay[]
+  width?: number
+  height?: number
+  quality?: number
+}
+
 // Font dosyasını yükle
 const fontPath = join(process.cwd(), 'public', 'fonts', 'Inter-Regular.ttf')
 const fontData = fs.readFileSync(fontPath)
 
-export async function generateScreenshots(buffer: Buffer, options: any) {
+export async function generateScreenshots(buffer: Buffer, options: ScreenshotOptions) {
   try {
-    const baseImage = sharp(buffer)
+    // Base image'i hazırla
+    const baseImage = sharp(buffer).png()
     const metadata = await baseImage.metadata()
 
     if (!metadata.width || !metadata.height) {
       throw new Error('Invalid image dimensions')
     }
 
-    // Text overlay'ler için SVG oluştur
-    async function createTextOverlay(text: string, fontSize: number, color: string) {
+    // İstenen boyuta resize et
+    if (options.width && options.height) {
+      baseImage.resize(options.width, options.height, {
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+    }
+
+    const generatedAssets: GeneratedAsset[] = []
+    const baseBuffer = await baseImage.toBuffer()
+
+    // Her overlay için
+    for (const overlay of options.overlays) {
+      // SVG text oluştur
       const svg = await satori(
         {
           type: 'div',
           props: {
-            children: text,
+            children: overlay.text,
             style: {
-              fontSize: `${fontSize}px`,
-              color: color,
+              fontSize: `${overlay.fontSize || 48}px`,
+              color: overlay.color || '#000000',
               fontFamily: 'Inter',
               width: '100%',
               height: '100%',
@@ -40,8 +68,8 @@ export async function generateScreenshots(buffer: Buffer, options: any) {
           },
         },
         {
-          width: metadata.width!,
-          height: metadata.height!,
+          width: metadata.width,
+          height: metadata.height,
           fonts: [
             {
               name: 'Inter',
@@ -53,25 +81,14 @@ export async function generateScreenshots(buffer: Buffer, options: any) {
         }
       )
 
-      return Buffer.from(svg)
-    }
+      // SVG'yi buffer'a çevir
+      const svgBuffer = Buffer.from(svg)
 
-    const generatedAssets: GeneratedAsset[] = []
-
-    // Her overlay için
-    for (const overlay of options.overlays) {
-      // Text overlay'i SVG olarak oluştur
-      const textOverlay = await createTextOverlay(
-        overlay.text,
-        overlay.fontSize || 48,
-        overlay.color || '#000000'
-      )
-
-      // Base image üzerine text overlay'i ekle
-      const composited = await baseImage
+      // Text overlay'i base image üzerine yerleştir
+      const composited = await sharp(baseBuffer)
         .composite([
           {
-            input: textOverlay,
+            input: svgBuffer,
             top: overlay.y || 0,
             left: overlay.x || 0,
           },
