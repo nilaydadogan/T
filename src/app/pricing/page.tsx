@@ -56,49 +56,81 @@ export default function PricingPage() {
 
   const handlePlanSelect = async (planName: string) => {
     try {
+      console.log('Starting plan selection process:', planName)
+
       if (!authStore.isAuthenticated()) {
+        console.log('User not authenticated, redirecting to sign in')
         router.push('/auth/sign-in?redirectTo=/pricing')
         return
       }
 
       if (planName === 'Free') {
+        console.log('Free plan selected, redirecting to studio')
         router.push('/studio')
         return
       }
 
-      // Direkt Stripe checkout başlat
+      const user = authStore.getUser()
+      console.log('Current user:', { 
+        id: user?.id, 
+        email: user?.email,
+        isAuthenticated: authStore.isAuthenticated()
+      })
+
+      // Start Stripe checkout
+      console.log('Creating checkout session for plan:', planName.toLowerCase())
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          userId: authStore.getUser()?.id,
-          email: authStore.getUser()?.email,
-          planType: planName.toLowerCase() // 'monthly' veya 'yearly'
+          userId: user?.id,
+          email: user?.email,
+          planType: planName.toLowerCase() // 'monthly' or 'yearly'
         }),
       })
 
+      console.log('Checkout session response status:', response.status)
+      
       if (!response.ok) {
-        throw new Error('Failed to create checkout session')
+        const errorData = await response.json()
+        console.error('Checkout session creation failed:', errorData)
+        throw new Error(`Failed to create checkout session: ${JSON.stringify(errorData)}`)
       }
 
-      const { sessionId } = await response.json()
+      const data = await response.json()
+      console.log('Checkout session created:', { sessionId: data.sessionId })
 
-      // Stripe checkout'a yönlendir
+      // Redirect to Stripe checkout
+      console.log('Initializing Stripe...')
       const stripe = await stripePromise
-      const { error } = await stripe!.redirectToCheckout({ sessionId })
+      
+      if (!stripe) {
+        throw new Error('Stripe failed to initialize')
+      }
+
+      console.log('Redirecting to Stripe checkout...')
+      const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId })
 
       if (error) {
+        console.error('Stripe redirect error:', {
+          message: error.message,
+          type: error.type
+        })
         throw error
       }
 
     } catch (error) {
-      console.error('Checkout error:', error)
+      console.error('Checkout process error:', {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      })
       toast({
         variant: "destructive",
-        title: "Error",
-        description: "Failed to start checkout process. Please try again.",
+        title: "Checkout Error",
+        description: error instanceof Error ? error.message : "Failed to start checkout process. Please try again.",
       })
     }
   }

@@ -42,23 +42,27 @@ function createSVGText(text: string, fontSize: number = 48, color: string = '#00
 
 export async function generateScreenshots(buffer: Buffer, options: ScreenshotOptions) {
   try {
-    // Base image'i hazırla
-    const baseImage = sharp(buffer).png()
+    const generatedAssets: GeneratedAsset[] = []
+
+    // Base image'i hazırla ve yüksek kalitede tut
+    const baseImage = sharp(buffer)
+      .png({ quality: options.quality || 100 }) // Yüksek kalite için quality parametresi
+
     const metadata = await baseImage.metadata()
 
     if (!metadata.width || !metadata.height) {
       throw new Error('Invalid image dimensions')
     }
 
-    // İstenen boyuta resize et
+    // İstenen boyuta resize et, kaliteyi koru
     if (options.width && options.height) {
       baseImage.resize(options.width, options.height, {
         fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+        withoutEnlargement: false, // Yüksek kalite için büyütmeye izin ver
       })
     }
 
-    const generatedAssets: GeneratedAsset[] = []
     const baseBuffer = await baseImage.toBuffer()
 
     // Her overlay için

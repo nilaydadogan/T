@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Card, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -10,7 +10,9 @@ import {
   User, 
   LogOut, 
   Crown,
-  ArrowLeft 
+  ArrowLeft,
+  Download,
+  Trash2
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { GeneratedAsset } from '@/types/user'
@@ -19,6 +21,21 @@ import { authStore } from '@/lib/auth-store'
 import { Loading } from '@/components/loading'
 import { ErrorDisplay } from '@/components/error-boundary'
 import { PageTransition } from '@/components/page-transition'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { useToast } from "@/components/ui/use-toast"
+import Image from 'next/image'
+import { supabase } from '@/lib/supabase'
+import { format } from 'date-fns'
 
 const downloadAsset = async (url: string, type: string) => {
   try {
@@ -46,39 +63,37 @@ export default function DashboardPage() {
   const [error, setError] = useState<Error | null>(null)
   const [userEmail, setUserEmail] = useState<string>('')
   const [userInitials, setUserInitials] = useState<string>('')
+  const { toast } = useToast()
+  const [subscriptionEnd, setSubscriptionEnd] = useState<string | null>(null)
 
   useEffect(() => {
     const initializeDashboard = async () => {
       try {
-        // Auth store'u initialize et
+        console.log('Starting dashboard initialization...')
+        
+        // First initialize auth
         await authStore.initialize()
-
-        if (!authStore.isAuthenticated()) {
+        const userData = authStore.getUser()
+        
+        if (!userData) {
+          console.log('No user data found, redirecting to login...')
           router.push('/auth/sign-in')
           return
         }
 
-        // Get user data
-        const userData = authStore.getUser()
-        if (!userData) {
-          // Auth store'u tekrar initialize etmeyi dene
-          await authStore.refreshAuth()
-          const refreshedUser = authStore.getUser()
-          
-          if (!refreshedUser) {
-            throw new Error('User data not found')
-          }
-          
-          setUser(refreshedUser)
-          setIsPro(authStore.isPro())
-        } else {
-          setUser(userData)
-          setIsPro(authStore.isPro())
-        }
+        console.log('User authenticated:', userData.id)
+        setUser(userData)
+        setIsPro(authStore.isPro())
 
+        // Then initialize storage with user ID
+        console.log('Initializing storage for user:', userData.id)
+        await storage.initialize()
+        
         // Get stored assets
         const storedAssets = storage.getAssets()
+        console.log('Loaded assets:', storedAssets.length)
         setAssets(storedAssets)
+
       } catch (err) {
         console.error('Dashboard initialization error:', err)
         setError(err instanceof Error ? err : new Error('Failed to load dashboard'))
@@ -155,6 +170,142 @@ export default function DashboardPage() {
     </Card>
   )
 
+  // Download handler
+  const handleDownload = useCallback(async (asset: GeneratedAsset) => {
+    try {
+      // Yükleme başladığını göster
+      toast({
+        title: "Preparing Download",
+        description: "Generating all sizes of your asset...",
+      })
+
+      // Asset tipine göre endpoint seç
+      const endpoint = asset.type === 'icon' ? '/api/generate-icons' : '/api/generate-screenshots'
+
+      // Asset URL'inden dosyayı al
+      const assetResponse = await fetch(asset.url)
+      const blob = await assetResponse.blob()
+      const file = new File([blob], asset.name, { type: 'image/png' })
+
+      // FormData oluştur
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('options', JSON.stringify({
+        // İkon için varsayılan options
+        ...(asset.type === 'icon' && {
+          borderRadius: 0,
+          borderWidth: 0,
+          borderColor: '#000000',
+          shadow: null
+        }),
+        // Screenshot için varsayılan options
+        ...(asset.type === 'screenshot' && {
+          deviceType: 'iphone-15-pro',
+          quality: 100
+        })
+      }))
+
+      // API'ye istek at
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to generate assets')
+      }
+
+      // ZIP dosyasını indir
+      const zipBlob = await response.blob()
+      const url = window.URL.createObjectURL(zipBlob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${asset.type === 'icon' ? 'app-icons' : 'app-screenshots'}.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+
+      toast({
+        title: "Download Complete",
+        description: `All sizes of your ${asset.type} have been downloaded.`,
+      })
+    } catch (error) {
+      console.error('Download error:', error)
+      toast({
+        variant: "destructive",
+        title: "Download Failed",
+        description: "Failed to download the asset.",
+      })
+    }
+  }, [toast])
+
+  // Delete handler
+  const handleDelete = useCallback(async (asset: GeneratedAsset) => {
+    try {
+      storage.removeAsset(asset.id)
+      // Refresh assets after deletion
+      setAssets(storage.getAssets())
+
+      toast({
+        title: "Delete Success",
+        description: "Asset deleted successfully.",
+      })
+    } catch (error) {
+      console.error('Delete error:', error)
+      toast({
+        variant: "destructive",
+        title: "Delete Failed",
+        description: "Failed to delete the asset.",
+      })
+    }
+  }, [toast])
+
+  // Add new useEffect for subscription end date
+  useEffect(() => {
+    const fetchSubscriptionEnd = async () => {
+      console.log('Fetching subscription end date...')
+      const { data: subscription, error } = await supabase
+        .from('user_subscriptions')
+        .select('current_period_end, subscription_type, stripe_subscription_id')
+        .eq('user_id', authStore.getUser()?.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      console.log('Full subscription data:', subscription)
+      console.log('Subscription error:', error)
+
+      if (subscription?.current_period_end) {
+        try {
+          const date = new Date(subscription.current_period_end)
+          const formattedDate = format(date, 'MMMM d, yyyy')
+          console.log('Parsed date:', date)
+          console.log('Formatted date:', formattedDate)
+          setSubscriptionEnd(formattedDate)
+        } catch (err) {
+          console.error('Error formatting date:', err)
+          console.log('Raw current_period_end value:', subscription.current_period_end)
+        }
+      } else {
+        console.log('No current_period_end found in subscription')
+      }
+    }
+
+    // Wait for auth initialization and then check subscription
+    const initAndFetch = async () => {
+      await authStore.initialize()
+      if (authStore.isPro()) {
+        console.log('User is pro, fetching subscription end date')
+        await fetchSubscriptionEnd()
+      } else {
+        console.log('User is not pro, skipping subscription end date fetch')
+      }
+    }
+
+    initAndFetch()
+  }, [])
+
   if (isLoading) {
     return <Loading />
   }
@@ -169,25 +320,38 @@ export default function DashboardPage() {
         <div className="container mx-auto p-6 space-y-8">
           {/* Header */}
           <div className="flex flex-col gap-4">
-            <div className="flex items-center">
-              <Button
-                variant="ghost"
-                className="flex items-center gap-2"
-                onClick={() => router.push('/')}
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Home
-              </Button>
-            </div>
-
             <div className="flex justify-between items-center">
               <div>
-                <h1 className="text-3xl font-bold">Dashboard</h1>
-                <p className="text-gray-600 dark:text-gray-400">
+                <h1 className="text-5xl font-bold bg-gradient-to-r from-violet-500 to-fuchsia-500 bg-clip-text text-transparent">
+                  Dashboard
+                </h1>
+                <p className="text-gray-600 dark:text-gray-400 mt-2">
                   Manage your generated assets
                 </p>
               </div>
               <div className="flex items-center gap-4">
+                <Button
+                  variant="ghost"
+                  className="flex items-center gap-2"
+                  onClick={() => router.push('/')}
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Home
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="flex items-center gap-2"
+                  onClick={() => router.push('/studio')}
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Studio
+                </Button>
+                <Button
+                  className="bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white"
+                  onClick={handleCreateNew}
+                >
+                  Create
+                </Button>
                 {!isPro && (
                   <Button
                     className="bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white flex items-center gap-2"
@@ -197,14 +361,6 @@ export default function DashboardPage() {
                     Upgrade to Pro
                   </Button>
                 )}
-                <Button
-                  variant="outline"
-                  className="flex items-center gap-2"
-                  onClick={handleLogout}
-                >
-                  <LogOut className="w-4 h-4" />
-                  Sign Out
-                </Button>
               </div>
             </div>
           </div>
@@ -231,6 +387,11 @@ export default function DashboardPage() {
                       }`}>
                         {isPro ? 'Premium' : 'Free Tier'}
                       </span>
+                      {isPro && subscriptionEnd && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                          Renews: {subscriptionEnd}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -256,22 +417,15 @@ export default function DashboardPage() {
                 {/* Navigation */}
                 <div className="space-y-1">
                   <Button
-                    variant="ghost"
-                    className="w-full justify-start"
-                    onClick={() => router.push('/studio')}
+                    variant="outline"
+                    className="w-full justify-start text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                    onClick={handleLogout}
                   >
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    Back to Studio
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign Out
                   </Button>
                 </div>
               </div>
-
-              <Button 
-                className="w-full"
-                onClick={handleCreateNew}
-              >
-                Create New Asset
-              </Button>
             </Card>
 
             {/* Main Content Area */}
@@ -293,7 +447,68 @@ export default function DashboardPage() {
                   {assets.length > 0 ? (
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                       {assets.map((asset) => (
-                        <AssetCard key={asset.id} asset={asset} />
+                        <Card key={asset.id} className="relative group">
+                          <div className="relative aspect-square">
+                            <Image
+                              src={asset.url}
+                              alt={asset.name}
+                              fill
+                              className={`object-contain p-4 rounded-t-lg ${
+                                asset.type === 'screenshot' ? 'bg-gray-50 dark:bg-gray-900' : ''
+                              }`}
+                            />
+                            
+                            {/* Action Buttons */}
+                            <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                              <Button
+                                size="icon"
+                                variant="secondary"
+                                className="w-6 h-6 bg-white/80 hover:bg-white/95 shadow-sm dark:bg-gray-900/80 dark:hover:bg-gray-900/95"
+                                onClick={() => handleDownload(asset)}
+                                title="Download"
+                              >
+                                <Download className="h-3 w-3" />
+                              </Button>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="secondary"
+                                    className="w-6 h-6 bg-white/80 hover:bg-red-500 hover:text-white shadow-sm dark:bg-gray-900/80 dark:hover:bg-red-500"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Asset</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to delete this asset? This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDelete(asset)}
+                                      className="bg-red-500 hover:bg-red-600 text-white"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </div>
+
+                          <div className="p-3">
+                            <h3 className="font-medium text-sm truncate">{asset.name}</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {asset.type} • {asset.size}
+                            </p>
+                          </div>
+                        </Card>
                       ))}
                     </div>
                   ) : (
@@ -313,7 +528,68 @@ export default function DashboardPage() {
                   {iconAssets.length > 0 ? (
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                       {iconAssets.map((asset) => (
-                        <AssetCard key={asset.id} asset={asset} />
+                        <Card key={asset.id} className="relative group">
+                          <div className="relative aspect-square">
+                            <Image
+                              src={asset.url}
+                              alt={asset.name}
+                              fill
+                              className={`object-contain p-4 rounded-t-lg ${
+                                asset.type === 'screenshot' ? 'bg-gray-50 dark:bg-gray-900' : ''
+                              }`}
+                            />
+                            
+                            {/* Action Buttons */}
+                            <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                              <Button
+                                size="icon"
+                                variant="secondary"
+                                className="w-6 h-6 bg-white/80 hover:bg-white/95 shadow-sm dark:bg-gray-900/80 dark:hover:bg-gray-900/95"
+                                onClick={() => handleDownload(asset)}
+                                title="Download"
+                              >
+                                <Download className="h-3 w-3" />
+                              </Button>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="secondary"
+                                    className="w-6 h-6 bg-white/80 hover:bg-red-500 hover:text-white shadow-sm dark:bg-gray-900/80 dark:hover:bg-red-500"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Asset</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to delete this asset? This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDelete(asset)}
+                                      className="bg-red-500 hover:bg-red-600 text-white"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </div>
+
+                          <div className="p-3">
+                            <h3 className="font-medium text-sm truncate">{asset.name}</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {asset.type} • {asset.size}
+                            </p>
+                          </div>
+                        </Card>
                       ))}
                     </div>
                   ) : (
@@ -333,7 +609,68 @@ export default function DashboardPage() {
                   {screenshotAssets.length > 0 ? (
                     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                       {screenshotAssets.map((asset) => (
-                        <AssetCard key={asset.id} asset={asset} />
+                        <Card key={asset.id} className="relative group">
+                          <div className="relative aspect-square">
+                            <Image
+                              src={asset.url}
+                              alt={asset.name}
+                              fill
+                              className={`object-contain p-4 rounded-t-lg ${
+                                asset.type === 'screenshot' ? 'bg-gray-50 dark:bg-gray-900' : ''
+                              }`}
+                            />
+                            
+                            {/* Action Buttons */}
+                            <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                              <Button
+                                size="icon"
+                                variant="secondary"
+                                className="w-6 h-6 bg-white/80 hover:bg-white/95 shadow-sm dark:bg-gray-900/80 dark:hover:bg-gray-900/95"
+                                onClick={() => handleDownload(asset)}
+                                title="Download"
+                              >
+                                <Download className="h-3 w-3" />
+                              </Button>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="icon"
+                                    variant="secondary"
+                                    className="w-6 h-6 bg-white/80 hover:bg-red-500 hover:text-white shadow-sm dark:bg-gray-900/80 dark:hover:bg-red-500"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Asset</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to delete this asset? This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDelete(asset)}
+                                      className="bg-red-500 hover:bg-red-600 text-white"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </div>
+
+                          <div className="p-3">
+                            <h3 className="font-medium text-sm truncate">{asset.name}</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {asset.type} • {asset.size}
+                            </p>
+                          </div>
+                        </Card>
                       ))}
                     </div>
                   ) : (

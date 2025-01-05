@@ -14,7 +14,12 @@ export default function SuccessPage() {
   useEffect(() => {
     const updateSubscriptionStatus = async () => {
       try {
-        // Fetch latest subscription status
+        console.log('Updating subscription status...')
+        
+        // Force refresh auth store with new subscription status
+        await authStore.initialize()
+        
+        // Double check the subscription status
         const { data: subscription } = await supabase
           .from('user_subscriptions')
           .select('subscription_type')
@@ -23,8 +28,15 @@ export default function SuccessPage() {
           .limit(1)
           .single()
 
-        // Force refresh auth store with new subscription status
-        await authStore.initialize()
+        console.log('Current subscription:', subscription)
+
+        if (!subscription || subscription.subscription_type !== 'pro') {
+          console.log('Subscription not updated yet, retrying in 2 seconds...')
+          // If not updated yet, try again in 2 seconds
+          setTimeout(updateSubscriptionStatus, 2000)
+        } else {
+          console.log('Subscription successfully updated to pro')
+        }
       } catch (error) {
         console.error('Error updating subscription status:', error)
       }

@@ -108,10 +108,15 @@ class AuthStore {
   }
 
   isAuthenticated() {
-    return !!this.user || this.persistedAuth
+    const isAuth = !!this.user
+    console.log('🔐 Auth check:', isAuth)
+    return isAuth
   }
 
   getUser() {
+    if (!this.user) {
+      console.warn('⚠️ No user found in auth store')
+    }
     return this.user
   }
 

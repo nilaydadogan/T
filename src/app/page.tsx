@@ -23,9 +23,30 @@ export default function HomePage() {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setIsAuthenticated(authStore.isAuthenticated())
-    setMounted(true)
+    const initAuth = async () => {
+      await authStore.initialize()
+      setIsAuthenticated(authStore.isAuthenticated())
+      setMounted(true)
+    }
+
+    initAuth()
+
+    // Listen for auth changes
+    const handleAuthChange = () => {
+      setIsAuthenticated(authStore.isAuthenticated())
+    }
+
+    window.addEventListener('auth-changed', handleAuthChange)
+    return () => window.removeEventListener('auth-changed', handleAuthChange)
   }, [])
+
+  const handleGetStarted = async () => {
+    if (authStore.isAuthenticated()) {
+      router.push('/studio')
+    } else {
+      router.push('/auth/sign-in')
+    }
+  }
 
   return (
     <PageTransition>
@@ -88,20 +109,20 @@ export default function HomePage() {
               {/* Left side - Text content */}
               <div className="flex-1 text-left px-6 space-y-6">
                 <div className="max-w-xl">
-                  <h1 className="text-5xl md:text-6xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500 [text-shadow:_0_1px_0_rgb(0_0_0_/_20%)] leading-tight">
-                    Create Beautiful Icons and Screenshots
-                  </h1>
+                  <h2 className="text-5xl md:text-6xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500 [text-shadow:_0_1px_0_rgb(0_0_0_/_20%)] leading-tight">
+                  Create professional Apple Store Icons and Screenshots with ease.  
+                  </h2>
                   <p className="mt-6 text-xl text-gray-600 dark:text-gray-400">
-                    Generate stunning app icons and device mockups with AI-powered tools
+                  Don't have a time? Let AI inspire and streamline your design process!
                   </p>
                   <div className="mt-10 flex gap-4">
-                    <Link
-                      href="/auth/sign-in"
-                      className="min-w-[160px] h-12 flex justify-center items-center bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500 text-white px-6 rounded-lg font-medium hover:opacity-90 transition-opacity"
+                    <Button
+                      className="bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white"
+                      onClick={handleGetStarted}
                     >
                       Get Started
                       <ArrowRight className="ml-2 h-5 w-5" />
-                    </Link>
+                    </Button>
                     {!isAuthenticated ? (
                       <Button
                         size="lg"

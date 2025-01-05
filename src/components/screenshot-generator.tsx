@@ -183,125 +183,172 @@ export function ScreenshotGenerator() {
   // Add state for showing paywall
   const [showPaywall, setShowPaywall] = useState(false)
 
-  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = event.target.files
-    if (!selectedFiles?.length) return
+  // Add state for selected device
+  const [selectedDevice, setSelectedDevice] = useState('iphone-15-pro')
 
-    if (!selectedTemplate) {
-      toast({
-        variant: "destructive",
-        title: "Select a device",
-        description: "Please select a device template before uploading your screenshots.",
-      })
-      event.target.value = '' // Reset input
-      return
-    }
+  const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0]
+    if (!selectedFile) return
 
-    // Check if more than 5 files are selected
-    if (selectedFiles.length > 5) {
-      toast({
-        variant: "destructive",
-        title: "Too many files",
-        description: "You can only process up to 5 screenshots at once.",
-      })
-      event.target.value = '' // Reset input
-      return
-    }
-
-    // Check file types and create preview for the first image
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp']
-    const allValid = Array.from(selectedFiles).every(file => validTypes.includes(file.type))
-    
-    if (!allValid) {
-      toast({
-        variant: "destructive",
-        title: "Unsupported file format",
-        description: "Please upload only JPEG, PNG, or WebP images.",
-      })
-      event.target.value = '' // Reset input
-      return
-    }
-
-    // Create preview URL for the first image
-    const firstFile = selectedFiles[0]
-    const url = URL.createObjectURL(firstFile)
-    
-    // Create an image to check dimensions
-    const img = new Image()
-    img.onload = () => {
-      // Check if image meets minimum dimensions of 1920x1080
-      if (img.width < 1920 || img.height < 1080) {
+    try {
+      // Check file type
+      const validTypes = ['image/jpeg', 'image/png', 'image/webp']
+      if (!validTypes.includes(selectedFile.type)) {
         toast({
           variant: "destructive",
-          title: "Image too small",
-          description: "Please upload images at least 1920x1080 pixels.",
+          title: "Unsupported file format",
+          description: "Please upload a JPEG, PNG, or WebP image.",
         })
-        setFile(null)
-        setPreviewUrl(null)
-        URL.revokeObjectURL(url)
         event.target.value = '' // Reset input
         return
       }
 
-      setPreviewUrl(url)
-      setFile(Array.from(selectedFiles))
-      
-      if (selectedFiles.length > 1) {
+      // Check file size
+      const MAX_SIZE = 5 * 1024 * 1024 // 5MB
+      if (selectedFile.size > MAX_SIZE) {
         toast({
-          title: "Multiple files selected",
-          description: `${selectedFiles.length} screenshots will be processed.`,
+          variant: "destructive",
+          title: "File too large",
+          description: "Please upload an image smaller than 5MB.",
         })
+        event.target.value = '' // Reset input
+        return
       }
+
+      // Create preview URL
+      const url = URL.createObjectURL(selectedFile)
+
+      // Validate image dimensions and format
+      const img = new Image()
+      img.onload = () => {
+        // Check minimum dimensions
+        if (img.width < 500 || img.height < 500) {
+          toast({
+            variant: "destructive",
+            title: "Image too small",
+            description: "Please upload an image at least 500x500 pixels.",
+          })
+          URL.revokeObjectURL(url)
+          event.target.value = '' // Reset input
+          return
+        }
+
+        setPreviewUrl(url)
+        setFile(selectedFile)
+      }
+
+      img.onerror = () => {
+        toast({
+          variant: "destructive",
+          title: "Invalid image",
+          description: "Please upload a valid image file.",
+        })
+        URL.revokeObjectURL(url)
+        event.target.value = '' // Reset input
+      }
+
+      img.src = url
+    } catch (error) {
+      console.error('Error handling file:', error)
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to process image. Please try another file.",
+      })
+      event.target.value = '' // Reset input
     }
-    img.src = url
-  }, [selectedTemplate, toast])
+  }, [toast])
 
   const handleGenerate = useCallback(async () => {
-    if (!previewUrl) return;
+    if (!file) return
+
+    if (!userLimits.canUseManualCreation()) {
+      toast({
+        title: "Manual Creation Limit Reached",
+        description: "Upgrade to Pro for unlimited manual creations.",
+        action: (
+          <Button
+            variant="default"
+            size="sm"
+            className="bg-gradient-to-r from-violet-500 to-purple-500"
+            onClick={() => router.push('/pricing')}
+          >
+            Upgrade to Pro
+          </Button>
+        ),
+      })
+      return
+    }
 
     try {
       setIsGenerating(true)
       setProgress(0)
 
-      // Simulate progress
-      const interval = setInterval(() => {
-        setProgress(prev => Math.min(prev + 10, 90))
-      }, 500)
+      const formData = new FormData()
+      
+      // Handle both File objects and base64 URLs
+      if (file instanceof File) {
+        formData.append('file', file)
+      } else if (typeof file === 'string' && file.startsWith('data:')) {
+        // Convert base64 to File object
+        try {
+          const response = await fetch(file)
+          const blob = await response.blob()
+          const newFile = new File([blob], 'screenshot.png', { type: 'image/png' })
+          formData.append('file', newFile)
+        } catch (error) {
+          console.error('Error converting base64 to file:', error)
+          throw new Error('Failed to process image')
+        }
+      } else {
+        throw new Error('Invalid file format')
+      }
 
-      // Convert base64 to blob
-      const response = await fetch(previewUrl)
+      formData.append('options', JSON.stringify({
+        deviceType: selectedDevice,
+        quality,
+      }))
+
+      const response = await fetch('/api/generate-screenshots', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to generate screenshots')
+      }
+
+      // ZIP dosyasını indir
       const blob = await response.blob()
-
-      clearInterval(interval)
-      setProgress(100)
-
-      // Create download link
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `screenshot-${Date.now()}.png` // Give a unique name
+      a.download = 'app-screenshots.zip'
       document.body.appendChild(a)
       a.click()
       a.remove()
       window.URL.revokeObjectURL(url)
 
+      setProgress(100)
+      userLimits.incrementManualCount()
+
       toast({
-        title: "Success",
-        description: "Screenshot downloaded successfully!",
+        title: "Success!",
+        description: "Screenshots generated successfully.",
       })
 
-      userLimits.incrementManualCount()
     } catch (error) {
+      console.error('Generation error:', error)
       toast({
         variant: "destructive",
-        title: "Error",
-        description: "Failed to download screenshot. Please try again.",
+        title: "Generation Failed",
+        description: error instanceof Error ? error.message : "Failed to generate screenshots",
       })
     } finally {
       setIsGenerating(false)
-      setProgress(0)
+      setTimeout(() => setProgress(0), 500)
     }
-  }, [previewUrl, toast])
+  }, [file, selectedDevice, quality, toast, router])
 
   // Add handler for selecting an asset
   const handleAssetSelect = useCallback(async (index: number) => {
@@ -331,60 +378,45 @@ export function ScreenshotGenerator() {
   const iPadTemplates = DEVICE_TEMPLATES.filter(t => t.device === 'ipad')
   const macTemplates = DEVICE_TEMPLATES.filter(t => t.device === 'mac')
 
-  const generateScreenshot = async () => {
-    if (!prompt) {
+  const handleAiGenerate = useCallback(async () => {
+    if (!prompt) return
+
+    if (!userLimits.canUseAIGeneration()) {
       toast({
-        variant: "destructive",
-        title: "Missing prompt",
-        description: "Please enter a description for your screenshot.",
+        title: "AI Generation Limit Reached",
+        description: "Upgrade to Pro for unlimited AI generations.",
+        action: (
+          <Button
+            variant="default"
+            size="sm"
+            className="bg-gradient-to-r from-violet-500 to-purple-500"
+            onClick={() => router.push('/pricing')}
+          >
+            Upgrade to Pro
+          </Button>
+        ),
       })
       return
     }
 
-    // Check generation limit before starting
-    if (!userLimits.canUseAIGeneration()) {
-      if (authStore.isAuthenticated()) {
-        toast({
-          title: "Generation Limit Reached",
-          description: "You've used your free AI generation. Upgrade to Pro for unlimited generations.",
-          action: (
-            <Button
-              variant="default"
-              size="sm"
-              className="bg-gradient-to-r from-violet-500 to-purple-500"
-              onClick={() => router.push('/pricing')}
-            >
-              Upgrade to Pro
-            </Button>
-          ),
-        })
-      } else {
-        setShowPaywall(true)
-      }
-      return
-    }
-
     try {
-      setIsGenerating(true)
+      setIsAiGenerating(true)
       setProgress(0)
 
       const interval = setInterval(() => {
         setProgress(prev => Math.min(prev + 10, 90))
       }, 500)
 
-      const template = DEVICE_TEMPLATES.find(t => t.id === selectedTemplate)
-      if (!template) {
-        throw new Error('Please select a device template')
-      }
-
-      const response = await fetch('/api/generate-screenshot', {
+      const response = await fetch('/api/generate-ai-screenshot', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ 
-          prompt: `A screenshot of ${prompt}, with exact dimensions ${template.width}x${template.height} pixels, designed for ${template.name}`,
-        })
+          prompt,
+          deviceType: selectedTemplate,
+          quality: 'hd'
+        }),
       })
 
       clearInterval(interval)
@@ -394,25 +426,36 @@ export function ScreenshotGenerator() {
       }
 
       const data = await response.json()
-      const newAssets = data.assets as GeneratedAsset[]
-
-      // Save assets for authenticated users
-      if (authStore.isAuthenticated()) {
-        newAssets.forEach((asset: GeneratedAsset) => storage.addAsset(asset))
-        toast({
-          title: "Success!",
-          description: "Screenshots generated successfully. View them in your dashboard.",
-        })
+      
+      if (!data.asset) {
+        throw new Error('No asset returned from API')
       }
 
-      setGeneratedAssets(newAssets)
-      setSelectedAssetIndex(generatedAssets.length)
-      setPreviewUrl(data.url)
+      // Yüksek kaliteli asset'i kullan
+      const highQualityAsset = {
+        ...data.asset,
+        previewUrl: data.asset.url
+      }
 
-      // Increment generation count
+      // Save asset for authenticated users
+      if (authStore.isAuthenticated()) {
+        storage.addAsset(highQualityAsset)
+      }
+
+      setProgress(100)
       userLimits.incrementGenerationCount()
+      setGeneratedAssets([highQualityAsset])
+      
+      if (highQualityAsset.url) {
+        setPreviewUrl(highQualityAsset.url)
+      }
 
-      // Scroll to preview
+      toast({
+        title: "Success!",
+        description: "Screenshot generated successfully.",
+      })
+
+      // Scroll to preview section
       setTimeout(() => {
         const previewSection = document.querySelector('#preview-section')
         if (previewSection) {
@@ -420,20 +463,37 @@ export function ScreenshotGenerator() {
         }
       }, 100)
 
-      toast({
-        title: "Success",
-        description: "Screenshot generated and downloaded successfully!",
-      })
     } catch (error) {
+      console.error('Generation error:', error)
+      
+      let errorMessage = 'Failed to generate screenshot'
+      
+      if (error instanceof Error) {
+        errorMessage = error.message
+      } else if (typeof error === 'object' && error !== null) {
+        // Try to extract error details from the response
+        try {
+          const errorData = await response?.json()
+          errorMessage = errorData?.error || errorData?.details || errorMessage
+        } catch (e) {
+          console.error('Failed to parse error response:', e)
+        }
+      }
+      
       toast({
         variant: "destructive",
-        title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to generate screenshot',
+        title: "Generation Failed",
+        description: errorMessage,
       })
     } finally {
-      setIsGenerating(false)
-      setProgress(0)
+      setIsAiGenerating(false)
+      setTimeout(() => setProgress(0), 500)
     }
+  }, [prompt, selectedTemplate, toast, router])
+
+  // Device seçimi için handler
+  const handleDeviceChange = (deviceId: string) => {
+    setSelectedDevice(deviceId)
   }
 
   return (
@@ -627,12 +687,12 @@ export function ScreenshotGenerator() {
                 </div>
                 <Button
                   className="w-full relative group overflow-hidden bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500 hover:from-violet-600 hover:via-fuchsia-600 hover:to-pink-600 text-white shadow-lg"
-                  onClick={generateScreenshot}
-                  disabled={isGenerating || !prompt || !selectedTemplate}
+                  onClick={handleAiGenerate}
+                  disabled={isAiGenerating || !prompt || !selectedTemplate}
                 >
                   <div className="absolute inset-0 bg-gradient-to-r from-violet-600/0 via-white/25 to-violet-600/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 animate-shimmer" />
                   <span className="relative flex items-center justify-center gap-2">
-                    {isGenerating ? (
+                    {isAiGenerating ? (
                       <>Generating...</>
                     ) : (
                       <>
@@ -642,7 +702,7 @@ export function ScreenshotGenerator() {
                     )}
                   </span>
                 </Button>
-                {isGenerating && (
+                {isAiGenerating && (
                   <div className="space-y-2 animate-in fade-in-50">
                     <Progress value={progress} className="bg-violet-100 dark:bg-violet-900">
                       <div className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500" style={{ width: `${progress}%` }} />

@@ -21,6 +21,7 @@ import { Paywall } from '@/components/paywall'
 import type { GeneratedAsset } from '@/types/user'
 import dynamic from 'next/dynamic'
 import JSZip from 'jszip'
+import { v4 as uuidv4 } from 'uuid'
 
 // Dynamically import icons
 const Wand2Icon = dynamic(() => import('lucide-react').then(mod => mod.Wand2), { ssr: false })
@@ -124,7 +125,16 @@ export function IconGenerator() {
       setProgress(0)
 
       const formData = new FormData()
-      formData.append('file', file)
+      
+      // File kontrolü ekle
+      if (file instanceof File) {
+        formData.append('file', file)
+      } else if (typeof file === 'string' && file.startsWith('data:')) {
+        formData.append('file', file)
+      } else {
+        throw new Error('Invalid file format')
+      }
+
       formData.append('options', JSON.stringify({
         borderRadius,
         borderWidth,
@@ -136,38 +146,60 @@ export function IconGenerator() {
         } : null
       }))
 
-      const interval = setInterval(() => {
-        setProgress(prev => Math.min(prev + 10, 90))
-      }, 500)
-
       const response = await fetch('/api/generate-icons', {
         method: 'POST',
         body: formData,
       })
 
-      clearInterval(interval)
-
       if (!response.ok) {
         throw new Error('Failed to generate icons')
       }
 
-      const data = await response.json()
-      const newAssets = data.assets as GeneratedAsset[]
-
-      // Save assets for authenticated users
-      if (authStore.isAuthenticated()) {
-        newAssets.forEach((asset: GeneratedAsset) => {
-          storage.addAsset(asset)
-        })
-        
-        toast({
-          title: "Success!",
-          description: "Icons generated successfully. View them in your dashboard.",
-        })
-      }
+      // ZIP dosyasını indir
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'app-icons.zip'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
 
       setProgress(100)
       userLimits.incrementManualCount()
+
+      toast({
+        title: "Success!",
+        description: "Icons generated successfully.",
+      })
+
+      // Scroll to preview section
+      setTimeout(() => {
+        const previewSection = document.querySelector('#preview-section')
+        if (previewSection) {
+          previewSection.scrollIntoView({ behavior: 'smooth' })
+        }
+      }, 100)
+
+      // Save asset for authenticated users
+      if (authStore.isAuthenticated()) {
+        try {
+          const asset: GeneratedAsset = {
+            id: uuidv4(),
+            type: 'icon',
+            name: file instanceof File ? file.name : `icon-${Date.now()}.png`,
+            url: previewUrl || '',
+            size: 'Multiple Sizes',
+            createdAt: Date.now()
+          }
+          
+          await storage.addAsset(asset)
+          await storage.initialize() // Storage'ı yenile
+        } catch (error) {
+          console.error('Failed to save asset:', error)
+        }
+      }
 
     } catch (error) {
       console.error('Generation error:', error)
@@ -178,52 +210,22 @@ export function IconGenerator() {
       })
     } finally {
       setIsGenerating(false)
-      setProgress(0)
+      setTimeout(() => setProgress(0), 500)
     }
   }, [file, borderRadius, borderWidth, borderColor, shadowEnabled, shadowBlur, shadowColor, shadowOpacity, toast, router])
 
   const handleAiGenerate = useCallback(async () => {
-    if (!prompt) {
-      toast({
-        variant: "destructive",
-        title: "Missing prompt",
-        description: "Please enter a description for your icon.",
-      })
-      return
-    }
-
-    // Check generation limit before starting
-    if (!userLimits.canUseAIGeneration()) {
-      if (authStore.isAuthenticated()) {
-        // Show upgrade prompt for authenticated users
-        toast({
-          title: "Generation Limit Reached",
-          description: "You've used your free AI generation. Upgrade to Pro for unlimited generations.",
-          action: (
-            <Button
-              variant="default"
-              size="sm"
-              className="bg-gradient-to-r from-violet-500 to-purple-500"
-              onClick={() => router.push('/pricing')}
-            >
-              Upgrade to Pro
-            </Button>
-          ),
-        })
-      } else {
-        setShowPaywall(true)
-      }
-      return
-    }
+    if (!prompt) return
 
     try {
-      setIsAiGenerating(true)
+      setIsGenerating(true)
       setProgress(0)
 
       const interval = setInterval(() => {
         setProgress(prev => Math.min(prev + 10, 90))
       }, 500)
 
+      console.log('🎨 Starting AI icon generation...')
       const response = await fetch('/api/generate-ai-icon', {
         method: 'POST',
         headers: {
@@ -235,56 +237,54 @@ export function IconGenerator() {
       clearInterval(interval)
 
       if (!response.ok) {
-        throw new Error('Failed to generate icon')
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to generate icon')
       }
 
       const data = await response.json()
+      console.log('📦 Received response:', data)
       
-      if (data.success && data.images) {
-        userLimits.incrementGenerationCount()
-        const newAssets = data.images.map((image: any) => ({
-          id: crypto.randomUUID(),
-          type: 'icon' as const,
-          name: `ai-icon-${Date.now()}.png`,
-          size: '1024x1024',
-          url: image.url,
-          createdAt: Date.now(),
-          data: { prompt }
-        } satisfies GeneratedAsset))
-        
-        // Save assets for authenticated users
-        if (authStore.isAuthenticated()) {
-          newAssets.forEach((asset: GeneratedAsset) => storage.addAsset(asset))
-          toast({
-            title: "Success!",
-            description: "Icons generated successfully. View them in your dashboard.",
-            action: (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push('/dashboard')}
-              >
-                View Dashboard
-              </Button>
-            ),
-          })
+      if (!data.asset) {
+        throw new Error('No asset returned from API')
+      }
+
+      // Save asset for authenticated users
+      if (authStore.isAuthenticated()) {
+        console.log('👤 User is authenticated, saving asset...')
+        try {
+          await storage.addAsset(data.asset)
+          console.log('💾 Asset saved to storage')
+          await storage.initialize()
+          console.log('🔄 Storage reinitialized')
+        } catch (error) {
+          console.error('❌ Failed to save asset:', error)
+          throw error
         }
-        
-        setGeneratedAssets(newAssets)
+      } else {
+        console.log('⚠️ User not authenticated, skipping storage')
       }
 
       setProgress(100)
+      setGeneratedAssets([data.asset])
+      setPreviewUrl(data.asset.url)
+
+      toast({
+        title: "Success!",
+        description: "Icon generated successfully.",
+      })
+
     } catch (error) {
+      console.error('❌ Generation error:', error)
       toast({
         variant: "destructive",
-        title: "Error",
-        description: "Failed to generate AI icon. Please try again.",
+        title: "Generation Failed",
+        description: error instanceof Error ? error.message : "Failed to generate icon",
       })
     } finally {
-      setIsAiGenerating(false)
-      setProgress(0)
+      setIsGenerating(false)
+      setTimeout(() => setProgress(0), 500)
     }
-  }, [prompt, toast, router])
+  }, [prompt, toast])
 
   // Add handler for selecting an asset
   const handleAssetSelect = useCallback(async (index: number) => {
@@ -490,22 +490,36 @@ export function IconGenerator() {
                 <Button
                   className="w-full relative group overflow-hidden bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500 hover:from-violet-600 hover:via-fuchsia-600 hover:to-pink-600 text-white shadow-lg"
                   onClick={handleAiGenerate}
-                  disabled={isAiGenerating || !prompt || !userLimits.canUseAIGeneration()}
+                  disabled={isGenerating || !prompt}
                 >
                   <div className="absolute inset-0 bg-gradient-to-r from-violet-600/0 via-white/25 to-violet-600/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 animate-shimmer" />
                   <span className="relative flex items-center justify-center gap-2">
-                    <Wand2Icon className="w-4 h-4" />
-                    {isAiGenerating ? 'Generating...' : 'Generate with AI'}
+                    {isGenerating ? (
+                      <>Generating...</>
+                    ) : (
+                      <>
+                        <Wand2Icon className="w-4 h-4" />
+                        Generate with AI
+                      </>
+                    )}
                   </span>
                 </Button>
-                {isAiGenerating && (
-                  <div className="space-y-2 animate-in fade-in-50">
+                {isGenerating && (
+                  <div className="space-y-2 animate-in fade-in-50 mt-4">
                     <Progress value={progress} className="bg-violet-100 dark:bg-violet-900">
-                      <div className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500" style={{ width: `${progress}%` }} />
+                      <div 
+                        className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500" 
+                        style={{ width: `${progress}%` }} 
+                      />
                     </Progress>
-                    <p className="text-sm text-center text-violet-500 dark:text-violet-400">
-                      Generating icon with AI... {progress}%
-                    </p>
+                    <div className="text-center space-y-1">
+                      <p className="text-sm text-violet-500 dark:text-violet-400">
+                        Generating icon with AI... {progress}%
+                      </p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        This might take a minute. We're creating a high-quality icon based on your description.
+                      </p>
+                    </div>
                   </div>
                 )}
                 {generatedAssets.length > 0 && (
@@ -731,15 +745,29 @@ export function IconGenerator() {
               onClick={handleGenerate}
               disabled={!file || isGenerating}
             >
-              {isGenerating ? 'Generating...' : 'Generate Icons'}
+              {isGenerating ? (
+                <>Generating...</>
+              ) : (
+                <>Generate Icons</>
+              )}
             </Button>
 
             {isGenerating && (
-              <div className="space-y-2">
-                <Progress value={progress} />
-                <p className="text-sm text-center text-gray-500">
-                  Generating icons... {progress}%
-                </p>
+              <div className="space-y-2 animate-in fade-in-50 mt-4">
+                <Progress value={progress} className="bg-violet-100 dark:bg-violet-900">
+                  <div 
+                    className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-pink-500" 
+                    style={{ width: `${progress}%` }} 
+                  />
+                </Progress>
+                <div className="text-center space-y-1">
+                  <p className="text-sm text-violet-500 dark:text-violet-400">
+                    Generating icons... {progress}%
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    This might take a moment. We're creating high-quality icons in multiple sizes.
+                  </p>
+                </div>
               </div>
             )}
           </Card>
